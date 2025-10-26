@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="Take pixel art photos instantly">
+    <meta name="theme-color" content="#000000">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="PixelArt">
+    <link rel="manifest" href="./manifest.json">
+    <link rel="apple-touch-icon" href="./icon-192.png">
+    <title>PixelArt Camera</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            position: relative;
+        }
+
+        #videoPreview {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        #canvas {
+            display: none;
+        }
+
+        .camera-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        .button-container {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .capture-button {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.3);
+            border: 4px solid rgba(255, 255, 255, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            backdrop-filter: blur(10px);
+        }
+
+        .capture-button:active {
+            transform: scale(0.95);
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        .capture-button-inner {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: white;
+        }
+
+        .error-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 10px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top-color: white;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .permission-hint {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            backdrop-filter: blur(10px);
+            display: none;
+        }
+
+        .permission-hint.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <div>Initializing camera...</div>
+    </div>
+
+    <div class="error-message" id="error">
+        <div id="errorText"></div>
+        <button style="margin-top: 15px; padding: 10px 20px; background: white; color: black; border: none; border-radius: 5px; cursor: pointer;" onclick="initCamera()">Retry</button>
+    </div>
+
+    <div class="permission-hint" id="permissionHint">
+        <div>Allow camera access to use the app</div>
+    </div>
+
+    <div class="camera-container" id="cameraContainer" style="display: none;">
+        <video id="videoPreview" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+        <canvas id="previewCanvas"></canvas>
+        <div class="button-container">
+            <div class="capture-button" id="captureButton" onclick="capturePhoto()">
+                <div class="capture-button-inner"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let stream = null;
+        let video = null;
+        let canvas = null;
+        let ctx = null;
+        let previewCanvas = null;
+        let previewCtx = null;
+        let animationFrame = null;
+
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            initCamera();
+            registerServiceWorker();
+        });
+
+        function registerServiceWorker() {
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('Service Worker registered', reg))
+                    .catch(err => console.log('Service Worker registration failed', err));
+            }
+        }
+
+        async function initCamera() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error').classList.remove('show');
+            document.getElementById('cameraContainer').style.display = 'none';
+
+            try {
+                video = document.getElementById('videoPreview');
+                canvas = document.getElementById('canvas');
+                ctx = canvas.getContext('2d');
+                previewCanvas = document.createElement('canvas');
+                previewCtx = previewCanvas.getContext('2d');
+
+                // Request camera access
+                const constraints = {
+                    video: {
+                        facingMode: 'environment', // Use back camera
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
+                };
+
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                
+                video.srcObject = stream;
+                await video.play();
+
+                // Set canvas size to match video
+                canvas.width = 1920;
+                canvas.height = 1080;
+
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('cameraContainer').style.display = 'block';
+
+                // Start real-time pixelation preview
+                startPreview();
+
+            } catch (error) {
+                console.error('Camera error:', error);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').classList.add('show');
+                document.getElementById('errorText').textContent = error.message || 'Unable to access camera. Please allow camera access.';
+                
+                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    document.getElementById('permissionHint').classList.add('show');
+                }
+            }
+        }
+
+        function startPreview() {
+            const pixelSize = 8; // Adjust for more/less pixelation
+            
+            function drawFrame() {
+                if (!video || video.videoWidth === 0) {
+                    animationFrame = requestAnimationFrame(drawFrame);
+                    return;
+                }
+
+                const videoWidth = video.videoWidth;
+                const videoHeight = video.videoHeight;
+
+                if (previewCanvas.width !== videoWidth || previewCanvas.height !== videoHeight) {
+                    previewCanvas.width = videoWidth;
+                    previewCanvas.height = videoHeight;
+                }
+
+                // Draw original video to preview canvas
+                previewCtx.drawImage(video, 0, 0);
+
+                // Get image data
+                const imageData = previewCtx.getImageData(0, 0, videoWidth, videoHeight);
+                const data = imageData.data;
+
+                // Apply pixelation effect
+                for (let y = 0; y < videoHeight; y += pixelSize) {
+                    for (let x = 0; x < videoWidth; x += pixelSize) {
+                        // Sample the color from the center of the pixel block
+                        const idx = (Math.floor(y + pixelSize/2) * videoWidth + Math.floor(x + pixelSize/2)) * 4;
+                        const r = data[idx];
+                        const g = data[idx + 1];
+                        const b = data[idx + 2];
+                        const a = data[idx + 3];
+
+                        // Fill the entire pixel block with that color
+                        previewCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${a})`;
+                        previewCtx.fillRect(x, y, pixelSize, pixelSize);
+                    }
+                }
+
+                animationFrame = requestAnimationFrame(drawFrame);
+            }
+
+            drawFrame();
+        }
+
+        async function capturePhoto() {
+            if (!video || !stream) return;
+
+            try {
+                // Stop the preview
+                if (animationFrame) {
+                    cancelAnimationFrame(animationFrame);
+                }
+
+                const videoWidth = video.videoWidth;
+                const videoHeight = video.videoHeight;
+
+                canvas.width = videoWidth;
+                canvas.height = videoHeight;
+
+                // Draw the current video frame to canvas
+                ctx.drawImage(video, 0, 0);
+
+                // Apply pixelation effect to canvas
+                applyPixelation(canvas, ctx, videoWidth, videoHeight, 8);
+
+                // Convert canvas to blob
+                canvas.toBlob(async (blob) => {
+                    if (blob) {
+                        await savePhoto(blob);
+                    }
+                }, 'image/jpeg', 0.95);
+
+                // Resume preview
+                startPreview();
+
+            } catch (error) {
+                console.error('Error capturing photo:', error);
+                alert('Error taking photo. Please try again.');
+                startPreview();
+            }
+        }
+
+        function applyPixelation(canvas, ctx, width, height, pixelSize) {
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const data = imageData.data;
+
+            // Clear canvas
+            ctx.clearRect(0, 0, width, height);
+
+            // Apply pixelation
+            for (let y = 0; y < height; y += pixelSize) {
+                for (let x = 0; x < width; x += pixelSize) {
+                    const idx = (Math.floor(y + pixelSize/2) * width + Math.floor(x + pixelSize/2)) * 4;
+                    const r = data[idx];
+                    const g = data[idx + 1];
+                    const b = data[idx + 2];
+                    const a = data[idx + 3];
+
+                    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${a})`;
+                    ctx.fillRect(x, y, pixelSize, pixelSize);
+                }
+            }
+        }
+
+        async function savePhoto(blob) {
+            try {
+                // Create download link
+                const url = URL.createObjectURL(blob);
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const filename = `pixelart-${timestamp}.jpg`;
+
+                // For iOS, create a temporary link and trigger download
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                
+                // Clean up
+                setTimeout(() => URL.revokeObjectURL(url), 100);
+
+                // Give user feedback
+                const button = document.getElementById('captureButton');
+                const originalBg = button.style.background;
+                button.style.background = 'rgba(0, 255, 0, 0.3)';
+                setTimeout(() => {
+                    button.style.background = originalBg;
+                }, 200);
+
+            } catch (error) {
+                console.error('Error saving photo:', error);
+                alert('Error saving photo. Please try again.');
+            }
+        }
+
+        // Handle visibility change to resume camera
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && stream) {
+                video.play();
+                startPreview();
+            }
+        });
+    </script>
+</body>
+</html>
