@@ -4,22 +4,37 @@ A Progressive Web App that lets you take pixel art photos instantly on your iPho
 
 ## Features
 
-- 📷 Real-time pixel art camera effect
-- 📱 Works offline after first load
-- 💾 Saves photos directly to your phone
+- 📷 Real-time pixel art camera effect (see the effect live!)
+- 📱 Works offline after first visit
+- 💾 Saves photos to Photos app using Web Share API
 - ⚡ No app store needed - add to home screen
-- 🎨 Instant pixelation effect
+- 🎨 Adjustable pixelation effect
+- 🔄 No mirroring - photos look correct
 
 ## How to Use
 
 ### On iPhone:
 
+**First Time Setup (Internet Required):**
 1. Open Safari and navigate to this website
-2. Tap the **Share** button (square with arrow)
-3. Select **Add to Home Screen**
-4. Open the app from your home screen
-5. Grant camera permissions when prompted
-6. Start taking pixel art photos!
+2. Wait for the app to load (service worker will cache for offline)
+3. Tap the **Share** button (square with arrow)
+4. Select **Add to Home Screen**
+5. Open the app from your home screen
+6. Grant camera permissions when prompted
+
+**Now It Works Offline:**
+- Go to airplane mode if you want
+- Open the app from your home screen
+- Works without internet! 🎉
+
+### Using the App:
+
+1. Point your camera at the subject
+2. See the live pixel art effect in real-time
+3. Tap the white button to capture
+4. Choose "Save to Photos" in the share sheet
+5. Your photo is saved! Check the Photos app
 
 ### Development:
 
