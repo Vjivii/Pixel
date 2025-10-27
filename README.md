@@ -36,19 +36,6 @@ A Progressive Web App that lets you take pixel art photos instantly on your iPho
 4. Choose "Save to Photos" in the share sheet
 5. Your photo is saved! Check the Photos app
 
-### Development:
-
-1. Start a local server:
-   ```bash
-   python -m http.server 8000
-   ```
-   or
-   ```bash
-   npx serve .
-   ```
-
-2. Open `http://localhost:8000` in your browser
-
 ## Technical Details
 
 - **Service Worker**: Enables offline functionality

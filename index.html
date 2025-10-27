@@ -272,12 +272,8 @@
                     displayCanvas.height = displayHeight;
                 }
 
-                // Draw original video to preview canvas (unmirror it)
-                previewCtx.save();
-                previewCtx.translate(videoWidth, 0);
-                previewCtx.scale(-1, 1);
+                // Draw original video to preview canvas
                 previewCtx.drawImage(video, 0, 0);
-                previewCtx.restore();
 
                 // Get image data
                 const imageData = previewCtx.getImageData(0, 0, videoWidth, videoHeight);
@@ -325,11 +321,7 @@
                 canvas.height = videoHeight;
 
                 // Draw the current video frame to canvas
-                // Flip horizontally to unmirror the video
-                ctx.translate(videoWidth, 0);
-                ctx.scale(-1, 1);
                 ctx.drawImage(video, 0, 0);
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
 
                 // Apply pixelation effect to canvas
                 applyPixelation(canvas, ctx, videoWidth, videoHeight, 8);
