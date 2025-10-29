@@ -181,6 +181,7 @@
         let displayCanvas = null;
         let displayCtx = null;
         let animationFrame = null;
+        let isProcessingCapture = false;
 
         // Initialize on page load
         window.addEventListener('load', () => {
@@ -307,11 +308,14 @@
 
         async function capturePhoto() {
             if (!video || !stream) return;
+            if (isProcessingCapture) return;
 
             try {
+                isProcessingCapture = true;
                 // Stop the preview
                 if (animationFrame) {
                     cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
                 }
 
                 const videoWidth = video.videoWidth;
@@ -328,18 +332,22 @@
 
                 // Convert canvas to blob
                 canvas.toBlob(async (blob) => {
-                    if (blob) {
-                        await savePhoto(blob);
+                    try {
+                        if (blob) {
+                            await savePhoto(blob);
+                        }
+                    } catch (e) {
+                        console.error('Error in save flow:', e);
+                    } finally {
+                        startPreview();
+                        isProcessingCapture = false;
                     }
                 }, 'image/jpeg', 0.95);
 
-                // Resume preview
-                startPreview();
-
             } catch (error) {
                 console.error('Error capturing photo:', error);
-                alert('Error taking photo. Please try again.');
-                startPreview();
+                try { startPreview(); } catch (_) {}
+                isProcessingCapture = false;
             }
         }
 
@@ -383,7 +391,12 @@
                         showCaptureFeedback();
                         return;
                     } catch (shareError) {
-                        // If share fails, fall through to download
+                        // If user cancels (AbortError) or disallows, just return gracefully
+                        if (shareError && (shareError.name === 'AbortError' || shareError.name === 'NotAllowedError')) {
+                            console.log('Share dismissed by user.');
+                            return;
+                        }
+                        // Otherwise, fall through to download
                         console.log('Share failed, using download:', shareError);
                     }
                 }
@@ -402,7 +415,7 @@
 
             } catch (error) {
                 console.error('Error saving photo:', error);
-                alert('Error saving photo. Please try again.');
+                // Swallow to keep UI responsive
             }
         }
 
@@ -418,8 +431,15 @@
         // Handle visibility change to resume camera
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden && stream) {
-                video.play();
-                startPreview();
+                try { video.play(); } catch (_) {}
+                // Avoid duplicating loops; cancel any stale frame first
+                if (animationFrame) {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
+                }
+                if (!isProcessingCapture) {
+                    startPreview();
+                }
             }
         });
     </script>
