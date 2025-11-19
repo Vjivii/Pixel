@@ -88,6 +88,70 @@
             background: white;
         }
 
+        .record-button-container {
+            position: absolute;
+            top: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+        }
+
+        .record-button {
+            width: 68px;
+            height: 68px;
+            border-radius: 50%;
+            border: 4px solid rgba(255, 0, 0, 0.6);
+            background: rgba(0, 0, 0, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .record-button-indicator {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #ff3b30;
+            transition: all 0.2s ease;
+        }
+
+        .record-button.recording .record-button-indicator {
+            border-radius: 10px;
+            width: 30px;
+            height: 30px;
+        }
+
+        .recording-timer {
+            position: absolute;
+            bottom: 90px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            z-index: 11;
+        }
+
+        .timer-bar {
+            background: #ff3b30;
+            padding: 8px 18px;
+            border-radius: 999px;
+            min-width: 120px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .timer-text {
+            font-family: "SFMono-Regular", "Roboto Mono", monospace;
+            font-size: 18px;
+            color: #fff;
+            letter-spacing: 2px;
+        }
+
         .error-message {
             position: absolute;
             top: 50%;
@@ -142,6 +206,24 @@
         .permission-hint.show {
             display: block;
         }
+
+        body.orientation-lock {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        @media (orientation: landscape) {
+            body.orientation-lock {
+                transform: rotate(90deg);
+                transform-origin: center center;
+                width: 100vh;
+                height: 100vw;
+            }
+        }
     </style>
 </head>
 <body>
@@ -164,9 +246,19 @@
         <canvas id="canvas"></canvas>
         <canvas id="previewCanvas"></canvas>
         <canvas id="pixelatedPreview"></canvas>
-        <div class="button-container">
+        <div class="record-button-container">
+            <div class="record-button" id="recordButton" onclick="toggleRecording()">
+                <div class="record-button-indicator"></div>
+            </div>
+        </div>
+        <div class="button-container" id="photoButtonContainer">
             <div class="capture-button" id="captureButton" onclick="capturePhoto()">
                 <div class="capture-button-inner"></div>
+            </div>
+        </div>
+        <div class="recording-timer" id="recordingTimer">
+            <div class="timer-bar">
+                <span class="timer-text" id="timerText">00:00</span>
             </div>
         </div>
     </div>
@@ -182,9 +274,18 @@
         let displayCtx = null;
         let animationFrame = null;
         let isProcessingCapture = false;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let isRecordingVideo = false;
+        let recordingStartTime = null;
+        let timerInterval = null;
+        const CAMERA_PERMISSION_KEY = 'pixelartCameraPermission';
+        const MEDIA_TAG = 'PixelArtCam_v2';
 
         // Initialize on page load
         window.addEventListener('load', () => {
+            document.body.classList.add('orientation-lock');
+            lockOrientation();
             initCamera();
             registerServiceWorker();
         });
@@ -220,6 +321,11 @@
                     }
                 };
 
+                const permissionState = await getCameraPermissionState();
+                if (permissionState === 'denied') {
+                    throw new Error('Camera access denied. Please enable it in your system settings.');
+                }
+
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 
                 video.srcObject = stream;
@@ -229,6 +335,11 @@
                 canvas.width = 1920;
                 canvas.height = 1080;
 
+                localStorage.setItem(CAMERA_PERMISSION_KEY, 'granted');
+                const permissionHint = document.getElementById('permissionHint');
+                if (permissionHint) {
+                    permissionHint.classList.remove('show');
+                }
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('cameraContainer').style.display = 'block';
 
@@ -242,12 +353,19 @@
                 document.getElementById('errorText').textContent = error.message || 'Unable to access camera. Please allow camera access.';
                 
                 if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-                    document.getElementById('permissionHint').classList.add('show');
+                    const permissionHint = document.getElementById('permissionHint');
+                    if (permissionHint) {
+                        permissionHint.classList.add('show');
+                    }
                 }
             }
         }
 
         function startPreview() {
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+                animationFrame = null;
+            }
             const pixelSize = 8; // Adjust for more/less pixelation
             
             function drawFrame() {
@@ -308,7 +426,7 @@
 
         async function capturePhoto() {
             if (!video || !stream) return;
-            if (isProcessingCapture) return;
+            if (isProcessingCapture || isRecordingVideo) return;
 
             try {
                 isProcessingCapture = true;
@@ -376,7 +494,7 @@
         async function savePhoto(blob) {
             try {
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                const filename = `pixelart-${timestamp}.jpg`;
+                const filename = `${MEDIA_TAG}-photo-${timestamp}.jpg`;
                 const file = new File([blob], filename, { type: 'image/jpeg' });
 
                 // Try Web Share API first (iOS Safari supports this better)
@@ -384,8 +502,8 @@
                     try {
                         await navigator.share({
                             files: [file],
-                            title: 'PixelArt Photo',
-                            text: 'Check out my pixel art photo!'
+                            title: 'PixelArtCam v2 Photo',
+                            text: `Captured with ${MEDIA_TAG}`
                         });
                         
                         showCaptureFeedback();
@@ -419,6 +537,150 @@
             }
         }
 
+        function toggleRecording() {
+            if (!displayCanvas || isProcessingCapture) return;
+            if (isRecordingVideo) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        }
+
+        function getSupportedMimeType() {
+            const types = [
+                'video/mp4;codecs=h264',
+                'video/webm;codecs=vp9',
+                'video/webm;codecs=vp8',
+                'video/webm'
+            ];
+            return types.find(type => MediaRecorder.isTypeSupported(type)) || '';
+        }
+
+        function startRecording() {
+            if (isRecordingVideo) return;
+            const captureStream = displayCanvas.captureStream ? displayCanvas.captureStream(30) : null;
+            if (!captureStream) {
+                console.warn('Canvas captureStream is not supported in this browser.');
+                return;
+            }
+
+            const mimeType = getSupportedMimeType();
+            try {
+                mediaRecorder = mimeType ? new MediaRecorder(captureStream, { mimeType }) : new MediaRecorder(captureStream);
+            } catch (error) {
+                console.error('Unable to start recording:', error);
+                return;
+            }
+
+            recordedChunks = [];
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+            mediaRecorder.onstop = async () => {
+                const recorderMime = mediaRecorder ? mediaRecorder.mimeType : '';
+                const type = recorderMime || mimeType || 'video/webm';
+                const blob = new Blob(recordedChunks, { type });
+                mediaRecorder = null;
+                resetRecordingUI();
+                if (blob.size > 0) {
+                    await saveVideo(blob);
+                }
+            };
+
+            mediaRecorder.start();
+            isRecordingVideo = true;
+            recordingStartTime = Date.now();
+            updateRecordingUI(true);
+            timerInterval = setInterval(updateRecordingTimer, 500);
+        }
+
+        function stopRecording() {
+            if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+            mediaRecorder.stop();
+        }
+
+        function resetRecordingUI() {
+            isRecordingVideo = false;
+            updateRecordingUI(false);
+            recordingStartTime = null;
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            const timerText = document.getElementById('timerText');
+            if (timerText) {
+                timerText.textContent = '00:00';
+            }
+        }
+
+        function updateRecordingUI(recording) {
+            const recordButton = document.getElementById('recordButton');
+            const photoContainer = document.getElementById('photoButtonContainer');
+            const timer = document.getElementById('recordingTimer');
+            if (recordButton) {
+                recordButton.classList.toggle('recording', recording);
+            }
+            if (photoContainer) {
+                photoContainer.style.display = recording ? 'none' : 'flex';
+            }
+            if (timer) {
+                timer.style.display = recording ? 'flex' : 'none';
+            }
+        }
+
+        function updateRecordingTimer() {
+            if (!recordingStartTime) return;
+            const elapsed = Date.now() - recordingStartTime;
+            const seconds = Math.floor(elapsed / 1000);
+            const mins = String(Math.floor(seconds / 60)).padStart(2, '0');
+            const secs = String(seconds % 60).padStart(2, '0');
+            const timerText = document.getElementById('timerText');
+            if (timerText) {
+                timerText.textContent = `${mins}:${secs}`;
+            }
+        }
+
+        async function saveVideo(blob) {
+            try {
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const mime = blob.type || 'video/webm';
+                const extension = mime.includes('mp4') ? 'mp4' : 'webm';
+                const filename = `${MEDIA_TAG}-video-${timestamp}.${extension}`;
+                const file = new File([blob], filename, { type: mime });
+
+                if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+                    try {
+                        await navigator.share({
+                            files: [file],
+                            title: 'PixelArtCam v2 Video',
+                            text: `Captured with ${MEDIA_TAG}`
+                        });
+                        return;
+                    } catch (shareError) {
+                        if (shareError && (shareError.name === 'AbortError' || shareError.name === 'NotAllowedError')) {
+                            console.log('Video share dismissed by user.');
+                            return;
+                        }
+                        console.log('Video share failed, falling back to download.', shareError);
+                    }
+                }
+
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 100);
+
+            } catch (error) {
+                console.error('Error saving video:', error);
+            }
+        }
+
         function showCaptureFeedback() {
             const button = document.getElementById('captureButton');
             const originalBg = button.style.background;
@@ -430,6 +692,10 @@
 
         // Handle visibility change to resume camera
         document.addEventListener('visibilitychange', () => {
+            if (document.hidden && isRecordingVideo) {
+                stopRecording();
+            }
+
             if (!document.hidden && stream) {
                 try { video.play(); } catch (_) {}
                 // Avoid duplicating loops; cancel any stale frame first
@@ -442,6 +708,29 @@
                 }
             }
         });
+
+        async function lockOrientation() {
+            const orientation = screen.orientation || screen.msOrientation || screen.mozOrientation;
+            if (orientation && orientation.lock) {
+                try {
+                    await orientation.lock('portrait');
+                } catch (error) {
+                    console.log('Orientation lock not supported:', error);
+                }
+            }
+        }
+
+        async function getCameraPermissionState() {
+            if (!navigator.permissions || !navigator.permissions.query) {
+                return localStorage.getItem(CAMERA_PERMISSION_KEY) || 'prompt';
+            }
+            try {
+                const status = await navigator.permissions.query({ name: 'camera' });
+                return status.state;
+            } catch (error) {
+                return localStorage.getItem(CAMERA_PERMISSION_KEY) || 'prompt';
+            }
+        }
     </script>
 </body>
 </html>
